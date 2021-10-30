@@ -128,3 +128,87 @@ kubectx_revalidate() {
     gcloud container clusters get-credentials "${NAME}" --project="${PROJECT}" --region="${REGION}" --internal-ip
     [[ ${NAMESPACE} == 'default' ]] || kubens "${NAMESPACE}"
 }
+
+# gow finds a go.mod file in the current directory or any ancestor directory.
+# If such a file exists, gow reads the major and minor version from the go directive
+# in the file. Then, gow finds the latest go binary on the PATH with the same
+# major and minor version and runs the binary with any remaining arguments.
+#
+# Only binaries on the PATH with a name matching the regular expression go[1-9][0-9]*(\.[1-9][0-9]*)(\.[1-9][0-9]*)?
+# are considered, which includes those binaries installed through https://golang.org/doc/manage-install.
+#
+# gow uses the ZSH array variable named "path" to search on the PATH, and as such gow only works with zsh.
+gow() {
+  local DIR
+  local DIR_PARENT
+  local DIR_INIT
+  local GOMOD_DATA
+  local GOMOD_FILE
+  local GOMOD_LINE
+  local GO_VERSION
+  local PATH_ITEMS
+  local X
+  local Y
+  local Z
+  local GO_VERSION_LATEST_BIN
+  local GO_VERSION_LATEST_BIN_PATCH
+  local REGEXP_GO_BIN
+  GO_VERSION_LATEST_BIN=
+  GO_VERSION_LATEST_BIN_PATCH=
+  REGEXP_GO_BIN='go[1-9][0-9]*(\.[1-9][0-9]*)(\.[1-9][0-9]*)?'
+  # TODO do we need to set GO_VERSION to empty explicitly?
+  GO_VERSION=
+  DIR_INIT=$(pwd)
+  DIR=${DIR_INIT}
+  while [[ 1 -eq 1 ]]; do
+    GOMOD_FILE="${DIR}/go.mod"
+    if [[ -e "${GOMOD_FILE}" && ! -d "${GOMOD_FILE}" ]]; then
+      GOMOD_DATA=$(cat "${GOMOD_FILE}" 2>/dev/null) || return
+      while IFS= read -r GOMOD_LINE || [[ -n "${GOMOD_LINE}" ]]; do
+        X=${GOMOD_LINE%%[[:space:]]*}
+        if [[ ${#X} -lt "${#GOMOD_LINE}" && ${X} == 'go' ]]; then
+          GO_VERSION=${GOMOD_LINE#*[[:space:]]}
+          break
+        fi
+      done <<< "${GOMOD_DATA}"
+      if [[ -z ${GO_VERSION} ]]; then
+        1>&2 echo "${GOMOD_FILE} is invalid: missing go directive"
+        return 1
+      fi
+      X=$(find "${path[@]}" -mindepth 1 -maxdepth 1 -print 2>/dev/null)
+      while IFS= read -r X; do
+        if [[ -n "${X}" && -x "${X}" && ! -d "${X}" ]]; then
+          Y=${X##*/}
+          if [[ ${Y} =~ $REGEXP_GO_BIN ]]; then
+            if [[ ${Y:2} == ${GO_VERSION} ]]; then
+              # Z is the patch number of the version of a go binary with compatible major/minor version on PATH.
+              Z=0
+            elif [[ ${Y:2} == "${GO_VERSION}."* ]]; then
+              Z=${Y##*.}
+            else
+              continue
+            fi
+            if [[ -z ${GO_VERSION_LATEST_BIN} || ${Z} -gt ${GO_VERSION_LATEST_BIN_PATCH} ]]; then
+              GO_VERSION_LATEST_BIN=${X}
+              GO_VERSION_LATEST_BIN_PATCH=${Z}
+            fi
+          fi
+        fi
+      done <<< "${X}"
+      if [[ -z ${GO_VERSION_LATEST_BIN} ]]; then
+        1>&2 echo "PATH does not contain binary named go${GO_VERSION}*"
+        1>&2 echo "Please install such a Go version via https://golang.org/doc/manage-install"
+        return 1
+      fi
+      "${GO_VERSION_LATEST_BIN}" "${@}"
+      return
+    fi
+    DIR_PARENT=$(dirname -- "${DIR}") || return
+    if [[ ${DIR_PARENT} == "${DIR}" ]]; then
+      break
+    fi
+    DIR=${DIR_PARENT}
+  done
+  1>&2 echo "no go.mod file in ${DIR_INIT} (or any parent thereof)"
+  return 1
+}
