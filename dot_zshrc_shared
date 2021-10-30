@@ -1,0 +1,130 @@
+# Test 123
+alias gc='git commit'
+
+gmm() {
+    if ! git diff --quiet --exit-code; then
+        1>&2 echo "ERROR: tree has unstaged changes"
+        return 1
+    fi
+    # Fail if there are untracked files.
+    # We use [[ $(... | head -c1 | wc -c) -ne 0 ]] to determine if a command outputs zero bytes. See https://stackoverflow.com/questions/12137431/test-if-a-command-outputs-an-empty-string
+    if [[ $(git ls-files --other --exclude-standard -z | head -c1 | wc -c) -ne 0 ]]; then
+        1>&2 echo "ERROR: tree has untracked files"
+        return 1
+    fi
+    local MASTER_BRANCH
+    local LINE
+    while read -r LINE; do
+        if [[ ${LINE} == 'refs/heads/main' || ${LINE} == 'refs/heads/master' ]]; then
+            MASTER_BRANCH=${LINE#refs/heads/}
+            break
+        fi
+    done < <(git branch -l --format '%(refname)') || return
+    local BRANCH
+    BRANCH=$(git branch --show-current) || return
+    if [[ ${BRANCH} == "${MASTER_BRANCH}" ]]; then
+        git pull; return
+    fi
+    git checkout "${MASTER_BRANCH}" || return
+    local RETURN_CODE
+    RETURN_CODE=0
+    git pull; RETURN_CODE=$?
+    git checkout "${BRANCH}" || return
+    if [[ ${RETURN_CODE} -ne 0 ]]; then
+        return "${RETURN_CODE}"
+    fi
+    git merge "${MASTER_BRANCH}" || return
+}
+
+gp() {
+    local EXIT_CODE
+    local TMP_DIR
+    TMP_DIR=
+    trap '[[ -z ${TMP_DIR} ]] || rm -rf "${TMP_DIR}"; trap - EXIT' EXIT
+    TMP_DIR=$(mktemp -d)
+    while [[ 1 -eq 1 ]]; do
+        EXIT_CODE=0
+        git push "$@" 2>"${TMP_DIR}"/stderr || EXIT_CODE=$?
+        1>&2 cat "${TMP_DIR}"/stderr
+        if [[ ${EXIT_CODE} -eq 0 ]]; then
+            return
+        fi
+        if grep -qE 'Received HTTP code 502 from proxy after CONNECT$' "${TMP_DIR}"/stderr; then
+            1>&2 echo "retrying: HEHE"
+            continue
+        fi
+        return "${EXIT_CODE}"
+    done
+}
+
+gpf() {
+    gp --force
+}
+
+gtfo() {
+    gpfo
+}
+
+gpfo() {
+    local BRANCH
+    local STDERR
+    BRANCH=$(git branch --show-current) || return
+    STDERR=$(gp --set-upstream origin "${BRANCH}" --force  2>&1 >/dev/null)
+    local NEXT_LINE_IS_URL
+    local URL
+    local STDERR_LINE
+    local REMOTE_OUTPUT
+    local REMOTE_OUTPUT_TRIMMED
+    NEXT_LINE_IS_URL=0
+    URL=
+    while IFS= read -r STDERR_LINE; do
+        if [[ ${STDERR_LINE} == 'remote: '* ]]; then
+            REMOTE_OUTPUT=${STDERR_LINE:8}
+            REMOTE_OUTPUT_TRIMMED=${REMOTE_OUTPUT#"${REMOTE_OUTPUT%%[![:space:]]*}"}
+            REMOTE_OUTPUT_TRIMMED=${REMOTE_OUTPUT_TRIMMED%"${REMOTE_OUTPUT_TRIMMED##*[![:space:]]}"}
+            if [[ ${NEXT_LINE_IS_URL} -ne 0 ]]; then
+                URL=${REMOTE_OUTPUT_TRIMMED}
+            elif [[ ${REMOTE_OUTPUT_TRIMMED} == 'Create a pull request for '* && ${REMOTE_OUTPUT_TRIMMED} == *' on GitHub by visiting:' ]]; then
+                NEXT_LINE_IS_URL=1
+                echo "${STDERR_LINE}"
+                continue
+            fi
+        fi
+        1>&2 echo "${STDERR_LINE}"
+        NEXT_LINE_IS_URL=0
+    done <<< "${STDERR}"
+    if [[ ${URL} != "" ]]; then
+        open "${URL}"
+    fi
+}
+
+gri() {
+    local RE_POSINT
+    RE_POSINT='^[1-9][0-9]*$'
+    [[ $1 =~ $RE_POSINT ]] || {
+        1>&2 echo "ERROR: first argument must be a positive base10 integer"
+        return 1
+    }
+    git rebase -i HEAD~"${1}"
+}
+
+kubectx-revalidate() {
+    local PROJECT
+    local REGION
+    local NAME
+    local NAMESPACE
+    local X
+    local N
+    X=$(kubectx -c)
+    NAMESPACE=$(kubens -c) || NAMESPACE='default'
+    N=${#X}
+    NAME=${X##*_}
+    (( N = N - ${#NAME} - 1 )) || true
+    X=${X:0:$N}
+    REGION=${X##*_}
+    (( N = N - ${#REGION} - 1 )) || true
+    X=${X:0:$N}
+    PROJECT=${X##*_}
+    gcloud container clusters get-credentials "${NAME}" --project="${PROJECT}" --region="${REGION}" --internal-ip
+    [[ ${NAMESPACE} == 'default' ]] || kubens "${NAMESPACE}"
+}
