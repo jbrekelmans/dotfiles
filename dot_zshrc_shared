@@ -1,5 +1,5 @@
-# Test 123
 alias gc='git commit'
+alias k='kubectl'
 
 gmm() {
     if ! git diff --quiet --exit-code; then
@@ -108,7 +108,7 @@ gri() {
     git rebase -i HEAD~"${1}"
 }
 
-kubectx-revalidate() {
+kubectx_revalidate() {
     local PROJECT
     local REGION
     local NAME
