@@ -19,21 +19,23 @@ gmm() {
             MASTER_BRANCH=${LINE#refs/heads/}
             break
         fi
+        # TODO disambiguite by choosing the one with most-recent commit
     done < <(git branch -l --format '%(refname)') || return
     local BRANCH
     BRANCH=$(git branch --show-current) || return
     if [[ ${BRANCH} == "${MASTER_BRANCH}" ]]; then
-        git pull; return
+        git pull
+    else
+        git fetch origin "${MASTER_BRANCH}":"${MASTER_BRANCH}" || return
+        local GIT_MERGE_ARGS
+        GIT_MERGE_ARGS=("${MASTER_BRANCH}")
+        GIT_MERGE_ARGS+=("$@")
+        git merge "${GIT_MERGE_ARGS[@]}"
     fi
-    git checkout "${MASTER_BRANCH}" || return
-    local RETURN_CODE
-    RETURN_CODE=0
-    git pull; RETURN_CODE=$?
-    git checkout "${BRANCH}" || return
-    if [[ ${RETURN_CODE} -ne 0 ]]; then
-        return "${RETURN_CODE}"
-    fi
-    git merge "${MASTER_BRANCH}" || return
+}
+
+gmmne() {
+    gmm --no-edit
 }
 
 gp() {
@@ -106,6 +108,10 @@ gri() {
         return 1
     }
     git rebase -i HEAD~"${1}"
+}
+
+grc() {
+    GIT_EDITOR=true git rebase --continue
 }
 
 kubectx_revalidate() {
@@ -212,3 +218,5 @@ gow() {
   1>&2 echo "no go.mod file in ${DIR_INIT} (or any parent thereof)"
   return 1
 }
+
+echo 'hint: chezmoi can be used to sync dotfiles: https://www.chezmoi.io/'
