@@ -114,6 +114,10 @@ grc() {
     GIT_EDITOR=true git rebase --continue
 }
 
+gcpc() {
+    GIT_EDITOR=true git cherry-pick --continue
+}
+
 kubectx_revalidate() {
     local PROJECT
     local REGION
